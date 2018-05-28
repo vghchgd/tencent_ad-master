@@ -1,0 +1,78 @@
+
+# coding: utf-8
+
+# In[ ]:
+
+
+#!/usr/bin/env python
+# -*- coding: GBK -*-
+import time
+from datetime import datetime
+from datetime import timedelta
+import pandas as pd
+import pickle
+import os
+import math
+import numpy as np
+from scipy import sparse
+import re
+import time
+import datetime
+import xgboost as xgb
+
+
+# In[ ]:
+
+#train(test)_gen_518.npz 是运行byran的baseline特征工程之后保存的的稀疏特征
+train_x = sparse.load_npz('../data/train_gen_520.npz')
+test_x = sparse.load_npz('../data/test_gen_520.npz')
+train_y = pd.read_csv('../data/train_y_520.csv', header=None)
+train_id=pd.read_csv('../data/train.csv')[['aid','uid']]
+predict_id=pd.read_csv('../data/test2.csv')[['aid','uid']]
+
+print(train_x.shape, test_x.shape, train_y.shape)
+
+# In[ ]:
+
+
+
+
+# In[9]:
+
+
+xgb_params = {
+        'eta': 0.1,
+        'max_depth': 7,
+        'min_child_weight': 5,
+        'gamma': 0,
+        'subsample': 0.8,
+        'colsample_bytree': 0.9,
+        'booster': 'gbtree',
+        'objective': 'binary:logistic',
+        'lambda': 1,
+        'seed': 100,
+        'silent': 1,
+        'eval_metric': 'auc'
+    }
+
+
+# In[11]:
+
+
+d_train = xgb.DMatrix(train_x, label=train_y, missing='-1')
+d_test = xgb.DMatrix(test_x, missing='-1')
+model_bst = xgb.train(xgb_params, d_train, num_boost_round=30)
+
+train_new_feature = model_bst.predict(d_train, pred_leaf=True)
+test_new_feature = model_bst.predict(d_test, pred_leaf=True)
+train_new_feature1 = pd.DataFrame(train_new_feature)
+test_new_feature1 = pd.DataFrame(test_new_feature)
+
+train_xgb_leaf = pd.concat([train_id, train_new_feature1], axis=1)
+test_xgb_leaf = pd.concat([predict_id, test_new_feature1], axis=1)
+#print (train_df.shape)
+#print (test_df.shape)
+model_bst.save_model('../data/model/0001.model')
+train_xgb_leaf.to_csv('../data/train_topN_and_xgb_feature_519.csv', index=False, encoding='GBK')
+test_xgb_leaf.to_csv('../data/test_topN_and_xgb_feature_519.csv', index=False, encoding='GBK')
+

@@ -1,0 +1,109 @@
+
+# coding: utf-8
+
+# In[25]:
+
+
+import pandas as pd
+import numpy as np
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
+from scipy import sparse
+from sklearn.model_selection import KFold
+from sklearn import cross_validation, metrics
+from sklearn.metrics import roc_auc_score
+import scipy.special as special
+from sklearn.externals import joblib
+import gc, os
+import datetime
+import pickle
+
+
+# In[26]:
+
+
+OPTIMIZE_ROUNDS = True
+EARLY_STOPPING_ROUNDS = 30
+raw_data_path = '../data/raw_data/'
+
+
+# In[ ]:
+
+
+train_x = sparse.load_npz('../data/raw_data/train_x_20_ctrtop10.npz')
+test_x =  sparse.load_npz('../data/raw_data/test_x_20_ctrtop10.npz')
+train_y = pd.read_csv('../data/train_y_519.csv', header=None)
+test = pd.read_csv('../data/test2.csv')
+res=test[['aid','uid']]
+
+
+
+# In[ ]:
+
+
+y_valid_pred = 0*train_y
+y_test_pred = 0
+
+print("XGB test")
+model = xgb.XGBClassifier(boosting_type='gbdt', colsample_bytree=0.7,
+                         learning_rate=0.05, max_depth=9, metric='auc',
+                         gamma=0.3, min_child_weight=32, 
+                         n_estimators=2500, n_jobs=-1,
+                         random_state=2022, reg_alpha=1, reg_lambda=0.4, 
+                         subsample=0.9)
+
+K = 3
+kf = KFold(n_splits = K, random_state = 2022, shuffle = True)
+np.random.seed(2022)
+
+test_x_csr = test_x.tocsr()
+train_x_csr = train_x.tocsr()
+del train_x, test_x
+
+# In[21]:
+
+
+for i, (train_index, test_index) in enumerate(kf.split(train_x_csr)):
+
+    # Create data for this fold
+    y_train, y_valid = train_y.iloc[train_index].copy(), train_y.iloc[test_index].copy()
+    X_train, X_valid = train_x_csr[train_index.tolist(), :].copy(), train_x_csr[test_index.tolist(), :].copy()
+    X_test = test_x_csr.copy()
+    print ("\nFold ", i)
+    print(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    if OPTIMIZE_ROUNDS:
+        eval_set = [(X_valid, y_valid)]
+        fit_model = model.fit(X_train, y_train,
+                              eval_set=eval_set,
+                              eval_metric='auc',
+                              early_stopping_rounds=EARLY_STOPPING_ROUNDS
+                              )
+        print ("  Best N trees = ", model.best_ntree_limit)
+        print ("  Best AUC = ", model.best_score)
+    else:
+        fit_model = model.fit(X_train, y_train)
+
+    pred = fit_model.predict_proba(X_valid)[:, 1]
+    y_valid_pred.iloc[test_index] = pred.reshape(-1,1)
+
+    # Accumulate test set predictions
+    y_test_pred += fit_model.predict_proba(X_test)[:, 1]
+    res['score'] = y_test_pred
+    res['score'] = res['score'].apply(lambda x: float('%.6f' % x))  
+    res.to_csv('../data/result/submission_22_{}.csv'.format(i), index=False)
+    del X_test, X_train, X_valid, y_train
+
+
+# In[24]:
+
+
+y_test_pred /= K  # Average test set predictions
+res['score'] = y_test_pred
+res['score'] = res['score'].apply(lambda x: float('%.6f' % x))
+res.to_csv('../data/result/submission_22.csv', index=False)
+os.system('zip ../data/result/baseline_xgb_22.zip ../data/result/submission_22.csv')
+print( "\nAUC for full training set:" )
+print(roc_auc_score(train_y, y_valid_pred))
+joblib.dump(model, '../data/model/xgb_submit_22.model')
+print('-----------model saved----------')
+
